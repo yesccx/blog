@@ -1,0 +1,89 @@
+name: Deploy Blog To COS
+
+on:
+  push:
+    tags:
+      - v*.*.*
+  workflow_dispatch:
+    # manual run
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Git checkout hugo-blog-generator
+        uses: actions/checkout@v3
+        with:
+          repository: yesccx/hugo-blog-generator
+          path: hugo
+
+      - name: Git checkout blog
+        uses: actions/checkout@v3
+        with:
+          path: hugo/content
+          ref: ${{ github.ref }}
+
+      - name: Setup hugo
+        uses: peaceiris/actions-hugo@v2
+        with:
+          hugo-version: '0.111.3'
+
+      - name: Hugo Build Content
+        run: |
+          cd hugo
+          hugo --minify --buildFuture
+
+      - name: Git commit content
+        working-directory: ./hugo/public
+        run: |
+          git init
+          git config --local user.email "github.action@github.com"
+          git config --local user.name "github action"
+          git add .
+          git commit -m "github action deploy" -a
+
+      - name: Git push content
+        uses: ad-m/github-push-action@master
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          repository: yesccx/blog
+          branch: static
+          directory: hugo/public
+          force: true
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: deploy
+    steps:
+      - name: Git checkout blog
+        uses: actions/checkout@v3
+        with:
+          repository: yesccx/blog
+          path: blog
+          ref: static
+
+      - name: Clear .git
+        working-directory: ./blog
+        run: |
+          rm .git -rf
+
+      - name: Deploy
+        uses: yesccx/tencent-cos-action@v0.1.0
+        with:
+          args: upload -rs --delete -y ./blog/ /
+          secret_id: ${{ secrets.SECRET_ID }}
+          secret_key: ${{ secrets.SECRET_KEY }}
+          bucket: ${{ secrets.BUCKET }}
+          region: ap-shanghai
+
+      - name: Notification
+        uses: yesccx/dingtalk-action@master
+        with:
+          webhook: ${{ secrets.DINGTALK_WEBHOOK }}
+          secret: ${{ secrets.DINGTALK_SECRET }}
+          msgtype: markdown
+          content: |
+            {
+              "title": "部署成功",
+              "text": "部署成功"
+            }
